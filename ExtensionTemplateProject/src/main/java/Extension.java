@@ -1,5 +1,7 @@
 
-import java.util.prefs.Preferences;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
@@ -24,27 +26,45 @@ public class Extension implements BurpExtension {
 
     public class WindowsProxyToggle {
 
-        private static final String REGISTRY_PATH = "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
-        private static final String PROXY_ENABLE_KEY = "ProxyEnable";
+        private static final String REG_QUERY_COMMAND = "reg query \"HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\" /v ProxyEnable";
+        private static final String REG_ADD_COMMAND_TEMPLATE = "reg add \"HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\" /v ProxyEnable /t REG_DWORD /d %s /f";
 
         public static void run(MontoyaApi api) {
             try {
-                // Open the registry key
-                Preferences userPrefs = Preferences.userRoot().node(REGISTRY_PATH);
+                // Read the current ProxyEnable value
+                String currentProxyEnable = readProxyEnable();
 
-                // Check if the proxy is enabled
-                int proxyEnable = userPrefs.getInt(PROXY_ENABLE_KEY, 0);
-                if (proxyEnable == 1) {
-                    // Proxy is enabled, so disable it
-                    userPrefs.putInt(PROXY_ENABLE_KEY, 0);
-                    api.logging().logToOutput("Proxy is disabled");
-                } else {
-                    // Proxy is disabled, so enable it
-                    userPrefs.putInt(PROXY_ENABLE_KEY, 1);
-                    api.logging().logToOutput("Proxy is enabled");
+                // Toggle the ProxyEnable value
+                String newProxyEnable = currentProxyEnable.equals("0x0") ? "1" : "0";
+                setProxyEnable(newProxyEnable, api);
+                api.logging().raiseInfoEvent("ProxyEnable value set to: " + newProxyEnable);
+            } catch (IOException e) {
+                api.logging().raiseErrorEvent(e.toString());
+            }
+        }
+
+        private static String readProxyEnable() throws IOException {
+            Process process = Runtime.getRuntime().exec(REG_QUERY_COMMAND);
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.contains("ProxyEnable")) {
+                        // Extract the value from the line
+                        String[] tokens = line.trim().split("\\s+");
+                        return tokens[tokens.length - 1];
+                    }
                 }
-            } catch (Exception e) {
-                api.logging().logToError(e);
+            }
+            return null;
+        }
+
+        private static void setProxyEnable(String value, MontoyaApi api) throws IOException {
+            String command = String.format(REG_ADD_COMMAND_TEMPLATE, value);
+            Process process = Runtime.getRuntime().exec(command);
+            try {
+                process.waitFor();
+            } catch (InterruptedException e) {
+                api.logging().raiseErrorEvent(e.toString());
             }
         }
     }
